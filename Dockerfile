@@ -1,44 +1,37 @@
-FROM phusion/baseimage:0.9.15
+FROM php:8.3.4-fpm-alpine3.19
 
 # Ensure UTF-8
-RUN locale-gen en_US.UTF-8
-ENV LANG       en_US.UTF-8
-ENV LC_ALL     en_US.UTF-8
+RUN apk add --update --no-cache tzdata
+ENV LANG en_US.UTF-8
+ENV LC_ALL en_US.UTF-8
+ENV TZ=${TZ:-UTC}
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
-ENV HOME /root
+# Install Nginx and other necessary packages
+RUN apk add --update --no-cache nginx vim curl wget
 
-RUN /etc/my_init.d/00_regen_ssh_host_keys.sh
+# Create a php.ini file with the desired configuration
+RUN mkdir -p /etc/php/fpm
+COPY php.ini /etc/php/fpm/php.ini
 
-CMD ["/sbin/my_init"]
+# Configure PHP-FPM
+RUN sed -i "s/;date.timezone =.*/date.timezone = UTC/" /etc/php/fpm/php.ini
+RUN sed -i -e "s/;daemonize\s*=\s*yes/daemonize = no/g" /etc/php/fpm/php-fpm.conf
+RUN sed -i "s/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/" /etc/php/fpm/php.ini
 
-# Nginx-PHP Installation
-RUN apt-get update
-RUN DEBIAN_FRONTEND="noninteractive" apt-get install -y vim curl wget build-essential python-software-properties
-RUN add-apt-repository -y ppa:ondrej/php5
-RUN add-apt-repository -y ppa:nginx/stable
-RUN apt-get update
-RUN DEBIAN_FRONTEND="noninteractive" apt-get install -y --force-yes php5-cli php5-fpm php5-mysql php5-pgsql php5-sqlite php5-curl\
-		       php5-gd php5-mcrypt php5-intl php5-imap php5-tidy
+# Create necessary directories
+RUN mkdir -p /var/www/html/public /run/nginx
 
-RUN sed -i "s/;date.timezone =.*/date.timezone = UTC/" /etc/php5/fpm/php.ini
-RUN sed -i "s/;date.timezone =.*/date.timezone = UTC/" /etc/php5/cli/php.ini
+# Clean up
+RUN rm -rf /var/cache/apk/*
 
-RUN DEBIAN_FRONTEND="noninteractive" apt-get install -y nginx
+# Copy service scripts
+COPY ./nginx/nginx.sh /etc/service/nginx/run
+COPY ./php/phpfpm.sh /etc/service/phpfpm/run
+RUN chmod +x /etc/service/nginx/run /etc/service/phpfpm/run
 
-RUN echo "daemon off;" >> /etc/nginx/nginx.conf
-RUN sed -i -e "s/;daemonize\s*=\s*yes/daemonize = no/g" /etc/php5/fpm/php-fpm.conf
-RUN sed -i "s/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/" /etc/php5/fpm/php.ini
- 
-RUN mkdir -p        /var/www
-ADD build/default   /etc/nginx/sites-available/default
-RUN mkdir           /etc/service/nginx
-ADD build/nginx.sh  /etc/service/nginx/run
-RUN chmod +x        /etc/service/nginx/run
-RUN mkdir           /etc/service/phpfpm
-ADD build/phpfpm.sh /etc/service/phpfpm/run
-RUN chmod +x        /etc/service/phpfpm/run
+# Expose the ports
+EXPOSE 9000
 
-EXPOSE 80
-# End Nginx-PHP
-
-RUN apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+# Start PHP-FPM (Nginx will be started in a separate container)
+CMD ["/etc/service/phpfpm/run"]
